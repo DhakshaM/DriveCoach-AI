@@ -60,8 +60,6 @@ def build_driver_view():
         
         output_box = gr.HTML("<h3>Driving Behaviour Feedback</h3>", elem_classes=["feedback-box"], visible=True)
 
-        # Invisible element that unlocks AudioContext on Start Trip click
-        audio_unlocker = gr.HTML(value="", visible=False)
 
     current_trip_state = gr.State(None)
     next_llm_idx_state = gr.State(None)
