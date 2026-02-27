@@ -11,28 +11,34 @@ import threading
 TRIPS_ROOT = Path("data/trips")
 _registry = TripRegistry(TRIPS_ROOT)
 MAX_SEGMENTS = 15
+_llm_lock = threading.Lock() 
+_segment_results = {}  # keyed by (driver_id, trip_id, idx) — never goes through gr.State
 
 def start_llm_for_segment(idx, summaries, llm_result_holder, driver_id=None, trip_id=None, segments=None):
     def _run():
-        summary = summaries[idx]
-        coaching = get_coaching_feedback(summary)
-        llm_result_holder["result"] = coaching
+        with _llm_lock:
+            summary = summaries[idx]
+            coaching = get_coaching_feedback(summary)
+            llm_result_holder["result"] = coaching  # keep for backward compat
 
-        # Fire-and-forget DB log — runs in same background thread, zero UI impact
-        if driver_id and trip_id and segments and idx < len(segments):
-            try:
-                severity = segments[idx]["severity"]
-                log_driver_response(
-                    driver_id=driver_id,
-                    trip_id=trip_id,
-                    segment_index=int(idx),
-                    severity=severity,
-                    summary=summary,
-                    coaching=coaching,
-                )
-                print(f"[DB_WRITER] Queued segment {idx} for driver {driver_id}")
-            except Exception as e:
-                print(f"[DB_WRITER] log_driver_response error (non-fatal): {e}")
+            # Also store in module-level dict — immune to gr.State copying
+            if driver_id and trip_id:
+                _segment_results[(driver_id, trip_id, idx)] = coaching
+
+            if driver_id and trip_id and segments and idx < len(segments):
+                try:
+                    severity = segments[idx]["severity"]
+                    log_driver_response(
+                        driver_id=driver_id,
+                        trip_id=trip_id,
+                        segment_index=int(idx),
+                        severity=severity,
+                        summary=summary,
+                        coaching=coaching,
+                    )
+                    print(f"[DB_WRITER] Queued segment {idx} for driver {driver_id}")
+                except Exception as e:
+                    print(f"[DB_WRITER] log_driver_response error (non-fatal): {e}")
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -53,6 +59,9 @@ def build_driver_view():
         gr.Markdown("---")
         
         output_box = gr.HTML("<h3>Driving Behaviour Feedback</h3>", elem_classes=["feedback-box"], visible=True)
+
+        # Invisible element that unlocks AudioContext on Start Trip click
+        audio_unlocker = gr.HTML(value="", visible=False)
 
     current_trip_state = gr.State(None)
     next_llm_idx_state = gr.State(None)
@@ -131,43 +140,51 @@ def build_driver_view():
 
         seg = segments[idx]
         severity = seg["severity"]
-
         label = f"Segment {idx + 1} — Severity: {severity}"
         dropdown_update = gr.update(choices=[label], value=label)
+        feedback_update = gr.update()
 
-        feedback_update = gr.update()  # default: no change
-        # ✅ DISPLAY precomputed LLM result for CURRENT segment
-        if (
-            next_llm_idx == idx
-            and isinstance(next_llm_result, dict)
-            and next_llm_result.get("result") is not None
-        ):
+        # Check if current segment's result is ready
+        driver_id = global_state.current_user_id
+        result_ready = (
+            driver_id and trip_id and
+            (driver_id, trip_id, idx) in _segment_results
+        )
+
+        if result_ready:
+            # Display it
             feedback_update = gr.update(
                 value=(
                     "<h3>Driving Behaviour Feedback</h3>"
-                    f"<p>{next_llm_result['result']}</p>"
+                    f"<p>{_segment_results[(driver_id, trip_id, idx)]}</p>"
                 )
             )
-        # 🔮 start LLM for NEXT segment
-        lookahead_idx = idx + 1
-        if lookahead_idx < len(segments):
-            if next_llm_idx != lookahead_idx:
+            next_idx = min(idx + 1, len(segments) - 1)
+
+            # Start LLM for next_idx immediately so it's ready when timer ticks
+            if next_idx != idx and (driver_id, trip_id, next_idx) not in _segment_results:
+                start_llm_for_segment(
+                    next_idx, summaries, {"result": None},
+                    driver_id=driver_id,
+                    trip_id=trip_id,
+                    segments=segments
+                )
+
+            return next_idx, dropdown_update, feedback_update, next_idx, next_llm_result
+
+        else:
+            # Result not ready yet — stay on same idx, start LLM for current if not started
+            if next_llm_idx != idx:
                 holder = {"result": None}
-                start_llm_for_segment(lookahead_idx, summaries, holder, driver_id=global_state.current_user_id, trip_id=trip_id, segments=segments)
+                start_llm_for_segment(
+                    idx, summaries, holder,
+                    driver_id=global_state.current_user_id,
+                    trip_id=trip_id,
+                    segments=segments
+                )
+                return idx, dropdown_update, feedback_update, idx, holder
 
-                next_llm_idx = lookahead_idx
-                next_llm_result = holder   # store HOLDER, not result
-
-
-        next_idx = min(idx + 1, len(segments) - 1)
-
-        return (
-            next_idx,
-            dropdown_update,
-            feedback_update,
-            next_llm_idx,
-            next_llm_result
-        )
+            return idx, dropdown_update, feedback_update, next_llm_idx, next_llm_result
     
     def reset_driver_view():
         return (
