@@ -1,0 +1,6 @@
+user_id,password_hash,role
+
+driver_01,$2b$12$M.r4Jz1cUOAIaX1hnR72PeSoRC1bfjjuZWOTXziXEuslP/TeZiGD2,driver
+driver_02,$2b$12$sHpqP94Lon.YHUZyAKNbdeSudI/Yt4TiWrc.ZZ1dQoFz.YLjeDsN6,driver
+driver_03,$2b$12$sEaJ1u00tuuIrnPRzw013.BZ7EOvV.yRFUPSSPQqmwHPEULcYRw4O,driver
+coach_01,$2b$12$akgbKYcWaXm7oATfFT1W0.F2O4S5O6DSsd3g2oAjcniNV7W1hKoxy,coach

@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# LLM models
+# app/backend/llm/*
+*.gguf
+
+# # Trip data
+# app/data/trips/*
+# !app/data/trips/README.md
+
+# Logs
+*.log
