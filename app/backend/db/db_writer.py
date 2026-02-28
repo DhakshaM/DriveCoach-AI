@@ -96,7 +96,6 @@ def log_driver_response(
     """
     _ensure_started()
 
-    print(f"[DB_WRITER] Queuing response — coaching preview: {repr(coaching[:80]) if coaching else 'NONE/EMPTY'}")
     
     sql = """
         INSERT INTO driver_responses

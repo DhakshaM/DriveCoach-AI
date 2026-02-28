@@ -17,7 +17,7 @@ def reset_login_fields():
 
 def build_login_view():
     with gr.Column(elem_classes=["fixed-width-container"]):
-        gr.Markdown("# Fleet Management LLM Dashboard", elem_classes=["center-header"])
+        gr.Markdown("# DriveCoach AI", elem_classes=["center-header"])
         gr.Markdown("Drive smarter. Get real-time AI coaching for safer, smoother journeys.", elem_classes=["center-header_subtitle"])
 
         username_box = gr.Textbox(

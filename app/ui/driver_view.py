@@ -36,7 +36,6 @@ def start_llm_for_segment(idx, summaries, llm_result_holder, driver_id=None, tri
                         summary=summary,
                         coaching=coaching,
                     )
-                    print(f"[DB_WRITER] Queued segment {idx} for driver {driver_id}")
                 except Exception as e:
                     print(f"[DB_WRITER] log_driver_response error (non-fatal): {e}")
 
@@ -70,22 +69,24 @@ def build_driver_view():
     streaming_state = gr.State(False)
     trip_df_state = gr.State(None)
     refresh_state = gr.State(0)
+
+    
     def start_streaming():
         driver_id = global_state.current_user_id
         print(f">>> DRIVER VIEW: starting stream for driver={driver_id}")
 
         if not driver_id:
-            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No driver ID</p>"), False
+            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No driver ID</p>"), False, None, None, None
 
         driver_dir = TRIPS_ROOT / driver_id
         if not driver_dir.exists():
-            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No trips directory</p>"), False
+            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No trips directory</p>"), False, None, None, None
 
         raw_trips = sorted([p.name for p in driver_dir.iterdir() if p.is_dir()])
         if not raw_trips:
-            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No trips available</p>"), False
+            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No trips available</p>"), False, None, None, None
 
-        trip_id = raw_trips[0]  # Implicitly use the first trip as "day 1"
+        trip_id = raw_trips[0]
         df = _registry._load_trip_df(driver_id, trip_id)
         segments = load_segment_severities_for_stream(driver_id, trip_id)
         summaries = {
@@ -93,19 +94,18 @@ def build_driver_view():
             for i in range(len(segments))
         }
         if not segments:
-            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No Trips</p>"), False
+            return [], 0, None, None, gr.update(choices=["Waiting for stream..."], value="Waiting for stream..."), gr.update(value="<h3>Driving Behaviour Feedback</h3><p>❌ No Trips</p>"), False, None, None, None
 
-        first_seg = segments[0]
-        severity = first_seg["severity"]
+        # ── NEW: show "Processing" state immediately ──
+        processing_label = "Segment 1 — Processing feedback..."
+        dropdown_update = gr.update(choices=[processing_label], value=processing_label)
+        feedback_update = gr.update(
+            value="<h3>Driving Behaviour Feedback</h3><p>⏳ Analyzing driving behavior for Segment 1...</p>"
+        )
 
-        label = f"Segment 1 — Severity: {severity}"
-        dropdown_update = gr.update(choices=[label], value=label)
-        feedback_update = gr.update()
-
-        # 🔑 SEED LLM PIPELINE FOR FIRST SEGMENT
+        # Seed LLM for first segment
         holder = {"result": None}
         start_llm_for_segment(0, summaries, holder, driver_id=driver_id, trip_id=trip_id, segments=segments)
-                
 
         return (
             segments,            # segment_stream_state
@@ -113,11 +113,11 @@ def build_driver_view():
             trip_id,             # current_trip_state
             dropdown_update,     # segment_dropdown
             feedback_update,     # output_box
-            True,                 # streaming_state (start streaming)
-            df,
-            summaries,
-            0,
-            holder
+            True,                # streaming_state
+            df,                  # trip_df_state
+            summaries,           # segment_summaries_state
+            0,                   # next_llm_idx_state
+            holder               # next_llm_result_state
         )
 
     def stop_streaming():
@@ -138,11 +138,9 @@ def build_driver_view():
 
         seg = segments[idx]
         severity = seg["severity"]
-        label = f"Segment {idx + 1} — Severity: {severity}"
-        dropdown_update = gr.update(choices=[label], value=label)
-        feedback_update = gr.update()
+        full_label = f"Segment {idx + 1} — Severity: {severity}"
+        processing_label = f"Segment {idx + 1} — Processing feedback..."
 
-        # Check if current segment's result is ready
         driver_id = global_state.current_user_id
         result_ready = (
             driver_id and trip_id and
@@ -150,7 +148,7 @@ def build_driver_view():
         )
 
         if result_ready:
-            # Display it
+            # BOTH label + feedback appear together
             feedback_update = gr.update(
                 value=(
                     "<h3>Driving Behaviour Feedback</h3>"
@@ -159,7 +157,7 @@ def build_driver_view():
             )
             next_idx = min(idx + 1, len(segments) - 1)
 
-            # Start LLM for next_idx immediately so it's ready when timer ticks
+            # Pre-start next segment
             if next_idx != idx and (driver_id, trip_id, next_idx) not in _segment_results:
                 start_llm_for_segment(
                     next_idx, summaries, {"result": None},
@@ -168,22 +166,27 @@ def build_driver_view():
                     segments=segments
                 )
 
+            dropdown_update = gr.update(choices=[full_label], value=full_label)
             return next_idx, dropdown_update, feedback_update, next_idx, next_llm_result
 
         else:
-            # Result not ready yet — stay on same idx, start LLM for current if not started
+            # Still waiting for current segment → show processing label, keep previous feedback
+            dropdown_update = gr.update(choices=[processing_label], value=processing_label)
+            feedback_update = gr.update()   # ← no change (keeps last coaching)
+
+            # Start LLM only if we haven't already
             if next_llm_idx != idx:
                 holder = {"result": None}
                 start_llm_for_segment(
                     idx, summaries, holder,
-                    driver_id=global_state.current_user_id,
+                    driver_id=driver_id,
                     trip_id=trip_id,
                     segments=segments
                 )
                 return idx, dropdown_update, feedback_update, idx, holder
 
             return idx, dropdown_update, feedback_update, next_llm_idx, next_llm_result
-    
+        
     def reset_driver_view():
         return (
             [],                                  # segment_stream_state
