@@ -96,8 +96,9 @@ class TripRegistry:
 
         summary = build_llm_summary(row_dict)
         severity = assign_severity(row_dict)
-        print(f">>> Calling LLM for trip {trip_id}, window {idx}")
-        coaching = get_coaching_feedback(summary)
+        print(f">>> Calling Coach LLM for trip {trip_id}, window {idx}")
+        coaching = get_coaching_feedback(summary, severity, True)
+        
         print(f">>> ABOUT TO LOG TO DB: driver={driver_id}, trip={trip_id}, idx={idx}, coaching={repr(coaching[:60])}")
 
         return {

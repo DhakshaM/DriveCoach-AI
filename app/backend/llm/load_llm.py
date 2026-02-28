@@ -22,7 +22,7 @@ def load_llm_once():
         n_ctx=4096,
         n_threads=8,
         chat_format=None,
-        verbose=True
+        verbose=False
     )
 
     init_llm(llm)

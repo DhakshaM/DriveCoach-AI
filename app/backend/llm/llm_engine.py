@@ -1,5 +1,4 @@
 # backend/llm/llm_engine.py
-
 """
 LLM Engine wrapper.
 
@@ -34,7 +33,7 @@ def init_llm(model):
 #     return coach is not None
 
 
-def get_coaching_feedback(summary: str) -> str:
+def get_coaching_feedback(summary: str, severity: str, is_coach: bool) -> str:
     """
     Main entry point used by UI and services.
     """
@@ -50,17 +49,47 @@ def get_coaching_feedback(summary: str) -> str:
 
     _log("Sending prompt to LLM")
 
-    output = coach(
+    if severity == "LOW":
+        output = coach(
         prompt,
-        max_tokens=200,          # ✅ correct
-        temperature=0.2,
+        max_tokens=200,
+        temperature=1.0,
+        top_p=1.0,
+        repeat_penalty=1.1,
+        stop=["<|eot_id|>","<|start_header_id|>"]
+    )
+    if severity == "MEDIUM":
+        output = coach(
+        prompt,
+        max_tokens=200,
+        temperature=0.8,
         top_p=0.9,
-        repeat_penalty=1.15,
-        stop=["<|eot_id|>","<|start_header_id|>"]      # ✅ VERY IMPORTANT
+        repeat_penalty=1.2,
+        stop=["<|eot_id|>","<|start_header_id|>"]
+    )
+    if severity == "HIGH":
+        output = coach(
+        prompt,
+        max_tokens=300,
+        temperature=0.3, # high temperature for creative long responses
+        top_p=0.8, # low prob low for controlling variety of words
+        repeat_penalty=1.2,
+        stop=["<|eot_id|>","<|start_header_id|>"]
     )
     print(">>> RAW RESULT TYPE:", type(output))
     print(">>> RAW RESULT:", output)
     text = output["choices"][0]["text"]
+
+    replacements = {
+        "segment": "trip",
+        "Segment": "Trip",
+        "this segment": "this trip",
+        "the segment": "the Trip",
+    }
+    if is_coach:
+        for word, replacement in replacements.items():
+            text = text.replace(word, replacement)
+
     return text.strip()
 
 
@@ -78,7 +107,7 @@ def _build_prompt(summary: str) -> str:
         "You are an expert driving coach. Analyze EVERY item in the sensor data. "
         "Give SPECIFIC feedback on harsh brakes, accelerations, corners, bumps, jerk, "
         "and speed variance. Be honest about issues but encouraging. Always mention "
-        "detected events.<|eot_id|>"
+        "detected events. <|eot_id|>"
         "<|start_header_id|>user<|end_header_id|>\n\n"
         f"{summary}"
         "<|eot_id|>"
